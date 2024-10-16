@@ -124,7 +124,8 @@ class ImageCache {
             'cache_time' => 0, // How long the image should be cached for. If the value is 0, then the cache never expires. Default is 0, never expires.m
             "quality" => array(// Determines the quality of cache output
                 "jpeg" => 85,
-                "png" => 8
+                "png" => 8,
+                "webp" => 60
             ),
             "cached_image_directory" => dirname(__FILE__) . "/php-image-cache",
             "cached_image_url" => "",
@@ -135,7 +136,8 @@ class ImageCache {
         $this->cached_image_url = rtrim($this->options->cached_image_url, "/");
         $this->quality = (object) array(
                     "jpeg" => $this->options->quality["jpeg"],
-                    "png" => $this->options->quality["png"]
+                    "png" => $this->options->quality["png"],
+                    "webp" => $this->options->quality["webp"]
         );
         $this->cached_directory_version = $this->options->cached_directory_version;
         $this->check_link_cached = $this->options->check_link_cached;
@@ -165,7 +167,7 @@ class ImageCache {
      * @return string The source file to be referenced after compressing an image
      */
     public function cache($image, $version = "") {
-ob_start();
+		ob_start();
         if ( ! is_writable($this->cached_image_directory))
             $this->error( $this->cached_image_directory . ' must writable!');
 
@@ -176,7 +178,7 @@ ob_start();
         $this->image_src_version = $version;
         $this->pre_set_class_vars();
 
-        // If the image hasn't been server up at this point, fetch, compress, cache, and return
+        // If the image hasn't been served up at this point, fetch, compress, cache, and return
         if ($this->cached_file_exists()) {
             $this->src_filesize = filesize($this->image_src);
             $this->cached_filesize = filesize($this->cached_filename);
@@ -193,6 +195,8 @@ ob_start();
         if (!$this->fetch_image())
             $this->error('Could not copy image resource.');
         $this->src_filesize = filesize($this->image_src);
+        // Delete the temporary source picture because imagedestroy() is no longer capable in PHP 8.0+
+        unlink($this->image_src);
         $this->cached_filesize = filesize($this->cached_filename);
         if ($this->src_filesize < $this->cached_filesize) {
             ob_end_clean();
@@ -207,7 +211,7 @@ ob_start();
      */
     private function download_image() {
         $image_resource = file_get_contents($this->image_src);
-        $basename = basename($this->image_src);
+		$basename = basename($this->image_src);
         if (!stripos($basename, '.' . $this->file_extension)) {
             $basename .= '.' . $this->file_extension;
         }
@@ -253,11 +257,11 @@ ob_start();
         $image_dest_func = 'imagecreate';
         if ($this->gd_version >= 2)
             $image_dest_func = 'imagecreatetruecolor';
-        if (in_array($file_mime_as_ext, array('gif', 'jpeg', 'png'))) {
+        if (in_array($file_mime_as_ext, array('gif', 'jpeg', 'png', 'webp'))) {
             $image_src_func = 'imagecreatefrom' . $this->file_extension;
             $image_create_func = 'image' . $this->file_extension;
         } else {
-            $this->error('The image you supply must have a .gif, .jpg/.jpeg, or .png extension.');
+            $this->error('The image you supply must have a .gif, .jpg/.jpeg, .png or .webp extension.');
             return false;
         }
         $this->increase_memory_limit();
@@ -266,7 +270,7 @@ ob_start();
         if ($file_mime_as_ext === 'jpeg') {
             $background = imagecolorallocate($image_dest, 255, 255, 255);
             imagefill($image_dest, 0, 0, $background);
-        } elseif (in_array($file_mime_as_ext, array('gif', 'png'))) {
+        } elseif (in_array($file_mime_as_ext, array('gif', 'png', 'webp'))) {
             imagealphablending($image_src, false);
             imagesavealpha($image_src, true);
             imagealphablending($image_dest, false);
@@ -283,12 +287,15 @@ ob_start();
             case 'gif':
                 $created = imagegif($image_dest, $this->cached_filename);
                 break;
+            case 'webp':
+                $created = imagewebp($image_dest, $this->cached_filename, $this->quality->webp);
+                break;
             default:
                 return false;
                 break;
         }
-        imagedestroy($image_src);
-        imagedestroy($image_dest);
+        unset($image_src);
+        unset($image_dest);
         $this->reset_memory_limit();
         return $created;
     }
@@ -403,6 +410,10 @@ ob_start();
             $this->error('The file you supplied isn\'t a valid image.');
         $this->file_mime_type = image_type_to_mime_type($image_type);
         $this->file_extension = image_type_to_extension($image_type, false);
+        
+        if ($this->file_mime_type == 'image/webp') {
+            $this->file_extension = 'webp';
+        }
     }
 
     /**
